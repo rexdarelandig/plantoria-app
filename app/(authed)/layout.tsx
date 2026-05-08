@@ -29,9 +29,9 @@ export default function AuthedLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="min-h-screen bg-background">
       <DashboardSidebar />
-      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+      <div className="flex min-h-screen flex-col pl-60">{children}</div>
     </div>
   );
 }
