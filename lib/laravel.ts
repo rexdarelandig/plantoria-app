@@ -202,10 +202,118 @@ export async function logoutOnServer(token: string | null): Promise<void> {
   }
 }
 
+export type PlantSortField = "created_at" | "name" | "scientific_name" | "updated_at";
+
+export type GetPlantsParams = {
+  page?: number;
+  perPage?: number;
+  sort?: PlantSortField;
+  direction?: "asc" | "desc";
+  /** Sent as `search`; wire this query param in Laravel (e.g. where name/description ilike). */
+  search?: string;
+};
+
+export type PlantsListMeta = {
+  currentPage: number;
+  lastPage: number;
+  perPage: number;
+  total: number;
+};
+
+export type PlantsListResult = {
+  plants: Plant[];
+  meta: PlantsListMeta;
+};
+
+function parsePlantsResponse(
+  raw: unknown,
+  fallback: { page: number; perPage: number }
+): PlantsListResult {
+  const { page, perPage } = fallback;
+
+  if (Array.isArray(raw)) {
+    const plants = raw as Plant[];
+    const total = plants.length;
+    return {
+      plants,
+      meta: {
+        currentPage: 1,
+        lastPage: 1,
+        perPage: total || perPage,
+        total,
+      },
+    };
+  }
+
+  if (!raw || typeof raw !== "object") {
+    return {
+      plants: [],
+      meta: {
+        currentPage: page,
+        lastPage: 1,
+        perPage,
+        total: 0,
+      },
+    };
+  }
+
+  const o = raw as Record<string, unknown>;
+  const plants = Array.isArray(o.data) ? (o.data as Plant[]) : [];
+
+  const metaRaw = o.meta;
+  if (metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw)) {
+    const m = metaRaw as Record<string, unknown>;
+    return {
+      plants,
+      meta: {
+        currentPage:
+          typeof m.current_page === "number" ? m.current_page : page,
+        lastPage: typeof m.last_page === "number" ? m.last_page : 1,
+        perPage: typeof m.per_page === "number" ? m.per_page : perPage,
+        total: typeof m.total === "number" ? m.total : plants.length,
+      },
+    };
+  }
+
+  if (
+    typeof o.current_page === "number" ||
+    typeof o.last_page === "number" ||
+    typeof o.total === "number"
+  ) {
+    return {
+      plants,
+      meta: {
+        currentPage:
+          typeof o.current_page === "number" ? o.current_page : page,
+        lastPage: typeof o.last_page === "number" ? o.last_page : 1,
+        perPage:
+          typeof o.per_page === "number" ? Number(o.per_page) : perPage,
+        total: typeof o.total === "number" ? o.total : plants.length,
+      },
+    };
+  }
+
+  const total = plants.length;
+  return {
+    plants,
+    meta: {
+      currentPage: 1,
+      lastPage: 1,
+      perPage: total || perPage,
+      total,
+    },
+  };
+}
+
+/**
+ * GET /api/plants with optional Laravel-style pagination/sorting.
+ * Query: page, per_page, sort, direction, search
+ */
 export async function getPlants(
   token: string | null,
+  params: GetPlantsParams = {},
   options?: { signal?: AbortSignal }
-): Promise<Plant[]> {
+): Promise<PlantsListResult> {
   const base = getLaravelBaseUrl();
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -215,7 +323,26 @@ export async function getPlants(
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${base}/api/plants`, {
+  const page = Math.max(1, params.page ?? 1);
+  const perPage = Math.max(1, params.perPage ?? 15);
+
+  const searchParams = new URLSearchParams();
+  searchParams.set("page", String(page));
+  searchParams.set("per_page", String(perPage));
+  if (params.sort) {
+    searchParams.set("sort", params.sort);
+  }
+  if (params.direction) {
+    searchParams.set("direction", params.direction);
+  }
+  const q = params.search?.trim();
+  if (q) {
+    searchParams.set("search", q);
+  }
+
+  const url = `${base}/api/plants?${searchParams.toString()}`;
+
+  const res = await fetch(url, {
     credentials: "include",
     headers,
     signal: options?.signal,
@@ -226,16 +353,74 @@ export async function getPlants(
   }
 
   const raw = (await res.json()) as unknown;
-  if (Array.isArray(raw)) {
-    return raw as Plant[];
+  return parsePlantsResponse(raw, { page, perPage });
+}
+
+export type CreatePlantPayload = {
+  name: string;
+  description: string;
+  scientific_name?: string;
+  image_url?: string;
+  slug?: string;
+  trefle_id?: number;
+};
+
+function formatCreatePlantError(body: unknown, status: number): string {
+  if (body && typeof body === "object") {
+    const o = body as Record<string, unknown>;
+    if (typeof o.message === "string") return o.message;
+    const errs = o.errors;
+    if (errs && typeof errs === "object" && !Array.isArray(errs)) {
+      const first = Object.values(errs)[0];
+      if (Array.isArray(first) && typeof first[0] === "string") return first[0];
+      if (typeof first === "string") return first;
+    }
   }
-  if (
-    raw &&
-    typeof raw === "object" &&
-    "data" in raw &&
-    Array.isArray((raw as { data: unknown }).data)
-  ) {
-    return (raw as { data: Plant[] }).data;
+  if (status === 401) return "You must be signed in to add a plant.";
+  if (status === 422) return "Please check the plant details.";
+  return "Could not save plant.";
+}
+
+function parseCreatedPlant(raw: unknown): Plant {
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (o.data && typeof o.data === "object") {
+      return o.data as Plant;
+    }
+    if (typeof o.name === "string") {
+      return raw as Plant;
+    }
   }
-  return [];
+  throw new Error("Unexpected response when creating plant.");
+}
+
+export async function createPlant(
+  token: string | null,
+  payload: CreatePlantPayload
+): Promise<Plant> {
+  const base = getLaravelBaseUrl();
+  await ensureSanctumCsrfCookie();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    ...xsrfHeaders(),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${base}/api/plants`, {
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  const raw = (await res.json().catch(() => ({}))) as unknown;
+
+  if (!res.ok) {
+    throw new Error(formatCreatePlantError(raw, res.status));
+  }
+
+  return parseCreatedPlant(raw);
 }
