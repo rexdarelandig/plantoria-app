@@ -20,6 +20,18 @@ export type LoginJson = {
   errors?: Record<string, string[] | string>;
 };
 
+export type Plant = {
+  id: number;
+  name: string;
+  scientific_name: string;
+  description: string;
+  image_url: string;
+  slug: string;
+  created_at: string;
+  updated_at: string;
+  user_id: number;
+};
+
 function pickToken(body: LoginJson): string | undefined {
   return body.token ?? body.data?.token;
 }
@@ -188,4 +200,42 @@ export async function logoutOnServer(token: string | null): Promise<void> {
   } catch {
     /* best-effort */
   }
+}
+
+export async function getPlants(
+  token: string | null,
+  options?: { signal?: AbortSignal }
+): Promise<Plant[]> {
+  const base = getLaravelBaseUrl();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...xsrfHeaders(),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${base}/api/plants`, {
+    credentials: "include",
+    headers,
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    throw new Error("Could not load plants.");
+  }
+
+  const raw = (await res.json()) as unknown;
+  if (Array.isArray(raw)) {
+    return raw as Plant[];
+  }
+  if (
+    raw &&
+    typeof raw === "object" &&
+    "data" in raw &&
+    Array.isArray((raw as { data: unknown }).data)
+  ) {
+    return (raw as { data: Plant[] }).data;
+  }
+  return [];
 }
