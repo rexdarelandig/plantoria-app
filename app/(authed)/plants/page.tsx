@@ -270,7 +270,7 @@ export default function PlantsPage() {
               {plants.map((plant) => (
                 <Card
                   key={plant.id}
-                  className="gap-0 overflow-hidden p-0"
+                  className="gap-0 overflow-hidden p-0 transition-all duration-300 hover:scale-[1.01] hover:shadow-lg"
                 >
                   <div className="relative aspect-[4/3] w-full bg-muted">
                     {plant.image_url ? (
