@@ -214,7 +214,14 @@ export function AddPlantDialog() {
             <Input
               id="plant-lookup"
               value={lookupQuery}
-              onChange={(ev) => setLookupQuery(ev.target.value)}
+              onChange={(ev) => {
+                const next = ev.target.value;
+                setLookupQuery(next);
+                if (!next.trim()) {
+                  setResults([]);
+                  setShowNoMatches(false);
+                }
+              }}
               placeholder="e.g. Monstera, snake plant"
               autoComplete="off"
               className="h-9"
