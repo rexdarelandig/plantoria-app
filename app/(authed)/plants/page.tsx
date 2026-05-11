@@ -525,7 +525,7 @@ export default function PlantsPage() {
                     }
                   }}
                 >
-                  <div className="relative aspect-4/3 w-full bg-muted">
+                  <div className="relative h-[144px] w-full shrink-0 overflow-hidden bg-muted">
                     {plant.image_url ? (
                       <Image
                         src={plant.image_url}
@@ -536,7 +536,7 @@ export default function PlantsPage() {
                         sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                       />
                     ) : (
-                      <div className="flex h-full min-h-36 items-center justify-center">
+                      <div className="flex h-full items-center justify-center">
                         <LeafIcon
                           className="size-12 text-muted-foreground"
                           aria-hidden
