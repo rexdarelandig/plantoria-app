@@ -23,6 +23,7 @@ import { toast } from "sonner";
 
 import { useAuth } from "@/lib/auth-context";
 import { AddPlantDialog } from "@/components/add-plant-dialog";
+import { PlantGridImage } from "@/components/plant-grid-image";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -527,13 +528,10 @@ export default function PlantsPage() {
                 >
                   <div className="relative h-[144px] w-full shrink-0 overflow-hidden bg-muted">
                     {plant.image_url ? (
-                      <Image
+                      <PlantGridImage
+                        key={`${plant.id}-${plant.image_url}`}
                         src={plant.image_url}
                         alt={plant.name}
-                        fill
-                        unoptimized
-                        className="object-cover"
-                        sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                       />
                     ) : (
                       <div className="flex h-full items-center justify-center">
