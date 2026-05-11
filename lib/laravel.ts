@@ -205,11 +205,19 @@ export async function logoutOnServer(token: string | null): Promise<void> {
 
 export type PlantSortField = "created_at" | "name" | "scientific_name" | "updated_at";
 
+export type PlantSortRule = {
+  field: PlantSortField;
+  direction: "asc" | "desc";
+};
+
 export type GetPlantsParams = {
   page?: number;
   perPage?: number;
-  sort?: PlantSortField;
-  direction?: "asc" | "desc";
+  /**
+   * Ordered sort criteria. Sent as comma-separated `sort` and `direction`
+   * (e.g. `sort=name,scientific_name&direction=asc,desc`).
+   */
+  sortRules?: PlantSortRule[];
   /** Sent as `search`; wire this query param in Laravel (e.g. where name/description ilike). */
   search?: string;
 };
@@ -337,7 +345,7 @@ function parsePlantsResponse(
 
 /**
  * GET /api/plants with optional Laravel-style pagination/sorting.
- * Query: page, per_page, sort, direction, search
+ * Query: page, per_page, sort, direction (comma-separated when multi), search
  */
 export async function getPlants(
   token: string | null,
@@ -359,11 +367,10 @@ export async function getPlants(
   const searchParams = new URLSearchParams();
   searchParams.set("page", String(page));
   searchParams.set("per_page", String(perPage));
-  if (params.sort) {
-    searchParams.set("sort", params.sort);
-  }
-  if (params.direction) {
-    searchParams.set("direction", params.direction);
+  const rules = params.sortRules?.filter((r) => r.field);
+  if (rules?.length) {
+    searchParams.set("sort", rules.map((r) => r.field).join(","));
+    searchParams.set("direction", rules.map((r) => r.direction).join(","));
   }
   const q = params.search?.trim();
   if (q) {
