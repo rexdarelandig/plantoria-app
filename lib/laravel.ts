@@ -213,6 +213,34 @@ export type GetPlantsParams = {
   search?: string;
 };
 
+export type Location = {
+  id: number;
+  name: string;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+  user_id: number;
+};
+
+export type LocationSortField =
+  | "created_at"
+  | "name"
+  | "slug"
+  | "updated_at";
+
+function parseLocationsResponse(raw: unknown): Location[] {
+  if (Array.isArray(raw)) {
+    return raw as Location[];
+  }
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (Array.isArray(o.data)) {
+      return o.data as Location[];
+    }
+  }
+  return [];
+}
+
 export type PlantsListMeta = {
   currentPage: number;
   lastPage: number;
@@ -356,6 +384,38 @@ export async function getPlants(
   return parsePlantsResponse(raw, { page, perPage });
 }
 
+/**
+ * GET /api/locations — returns the full list; filter/sort/paginate in the client.
+ */
+export async function getLocations(
+  token: string | null,
+  options?: { signal?: AbortSignal }
+): Promise<Location[]> {
+  const base = getLaravelBaseUrl();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...xsrfHeaders(),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const url = `${base}/api/locations`;
+
+  const res = await fetch(url, {
+    credentials: "include",
+    headers,
+    signal: options?.signal,
+  });
+
+  if (!res.ok) {
+    throw new Error("Could not load locations.");
+  }
+
+  const raw = (await res.json()) as unknown;
+  return parseLocationsResponse(raw);
+}
+
 export type CreatePlantPayload = {
   name: string;
   description: string;
@@ -394,6 +454,104 @@ function parseCreatedPlant(raw: unknown): Plant {
   throw new Error("Unexpected response when creating plant.");
 }
 
+function parseCreatedLocation(raw: unknown): Location {
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (o.data && typeof o.data === "object") {
+      return o.data as Location;
+    }
+    if (typeof o.name === "string" && typeof o.id === "number") {
+      return raw as Location;
+    }
+  }
+  throw new Error("Unexpected response when creating location.");
+}
+
+export type CreateLocationPayload = {
+  name: string;
+  description?: string | null;
+};
+
+export type UpdateLocationPayload = {
+  name: string;
+  description?: string | null;
+};
+
+function formatCreateLocationError(body: unknown, status: number): string {
+  if (body && typeof body === "object") {
+    const o = body as Record<string, unknown>;
+    if (typeof o.message === "string") return o.message;
+    const errs = o.errors;
+    if (errs && typeof errs === "object" && !Array.isArray(errs)) {
+      const first = Object.values(errs)[0];
+      if (Array.isArray(first) && typeof first[0] === "string") return first[0];
+      if (typeof first === "string") return first;
+    }
+  }
+  if (status === 401) return "You must be signed in to add a location.";
+  if (status === 422) return "Please check the location details.";
+  return "Could not save location.";
+}
+
+function formatUpdateLocationError(body: unknown, status: number): string {
+  if (body && typeof body === "object") {
+    const o = body as Record<string, unknown>;
+    if (typeof o.message === "string") return o.message;
+    const errs = o.errors;
+    if (errs && typeof errs === "object" && !Array.isArray(errs)) {
+      const first = Object.values(errs)[0];
+      if (Array.isArray(first) && typeof first[0] === "string") return first[0];
+      if (typeof first === "string") return first;
+    }
+  }
+  if (status === 401) return "You must be signed in to update a location.";
+  if (status === 404) return "Location not found.";
+  if (status === 422) return "Please check the location details.";
+  return "Could not update location.";
+}
+
+function formatDeleteLocationError(body: unknown, status: number): string {
+  if (body && typeof body === "object") {
+    const o = body as Record<string, unknown>;
+    if (typeof o.message === "string") return o.message;
+    const errs = o.errors;
+    if (errs && typeof errs === "object" && !Array.isArray(errs)) {
+      const first = Object.values(errs)[0];
+      if (Array.isArray(first) && typeof first[0] === "string") return first[0];
+      if (typeof first === "string") return first;
+    }
+  }
+  if (status === 401) return "You must be signed in to delete a location.";
+  if (status === 404) return "Location not found.";
+  return "Could not delete location.";
+}
+
+export async function deleteLocation(
+  token: string | null,
+  id: number
+): Promise<void> {
+  const base = getLaravelBaseUrl();
+  await ensureSanctumCsrfCookie();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...xsrfHeaders(),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${base}/api/locations/${encodeURIComponent(String(id))}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers,
+  });
+
+  if (!res.ok) {
+    const raw = (await res.json().catch(() => ({}))) as unknown;
+    throw new Error(formatDeleteLocationError(raw, res.status));
+  }
+}
+
 export async function createPlant(
   token: string | null,
   payload: CreatePlantPayload
@@ -423,4 +581,79 @@ export async function createPlant(
   }
 
   return parseCreatedPlant(raw);
+}
+
+export async function createLocation(
+  token: string | null,
+  payload: CreateLocationPayload
+): Promise<Location> {
+  const base = getLaravelBaseUrl();
+  await ensureSanctumCsrfCookie();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    ...xsrfHeaders(),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${base}/api/locations`, {
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  const raw = (await res.json().catch(() => ({}))) as unknown;
+
+  if (!res.ok) {
+    throw new Error(formatCreateLocationError(raw, res.status));
+  }
+
+  return parseCreatedLocation(raw);
+}
+
+/**
+ * PATCH /api/locations/:id
+ */
+export async function updateLocation(
+  token: string | null,
+  id: number,
+  payload: UpdateLocationPayload
+): Promise<Location> {
+  const base = getLaravelBaseUrl();
+  await ensureSanctumCsrfCookie();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    ...xsrfHeaders(),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(
+    `${base}/api/locations/${encodeURIComponent(String(id))}`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers,
+      body: JSON.stringify({
+        name: payload.name.trim(),
+        description:
+          payload.description === undefined || payload.description === null
+            ? ""
+            : String(payload.description).trim(),
+      }),
+    },
+  );
+
+  const raw = (await res.json().catch(() => ({}))) as unknown;
+
+  if (!res.ok) {
+    throw new Error(formatUpdateLocationError(raw, res.status));
+  }
+
+  return parseCreatedLocation(raw);
 }
