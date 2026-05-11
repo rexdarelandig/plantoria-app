@@ -27,7 +27,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (ready && user) {
-      router.replace("/dashboard");
+      router.replace("/plants");
     }
   }, [ready, user, router]);
 
@@ -37,7 +37,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.replace("/dashboard");
+      router.replace("/plants");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed.");
     } finally {

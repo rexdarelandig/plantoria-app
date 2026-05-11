@@ -8,7 +8,6 @@ import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { href: "/dashboard", label: "Dashboard" },
   { href: "/locations", label: "Locations" },
   { href: "/plants", label: "Plants" },
 ];
@@ -27,7 +26,7 @@ export function DashboardSidebar() {
     <aside className="fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-border bg-card">
       <div className="flex h-14 shrink-0 items-center border-b border-border px-4">
         <Link
-          href="/dashboard"
+          href="/plants"
           className="font-heading text-sm font-semibold tracking-tight"
         >
           Plantoria
