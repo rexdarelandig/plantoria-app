@@ -44,19 +44,19 @@ const selectClass =
 const SEARCH_DEBOUNCE_MS = 400;
 
 function compareLocations(
-  a: { name: string; slug?: string | null; created_at: string; updated_at: string },
-  b: { name: string; slug?: string | null; created_at: string; updated_at: string },
+  a: { name: string; created_at: string; updated_at: string },
+  b: { name: string; created_at: string; updated_at: string },
   sortKey: LocationSortField,
   sortDir: "asc" | "desc"
 ): number {
   const dir = sortDir === "asc" ? 1 : -1;
-  if (sortKey === "name" || sortKey === "slug") {
+  if (sortKey === "name") {
     const av = String(a[sortKey] ?? "").toLowerCase();
     const bv = String(b[sortKey] ?? "").toLowerCase();
     return av.localeCompare(bv) * dir;
   }
-  const at = new Date(a[sortKey]).getTime();
-  const bt = new Date(b[sortKey]).getTime();
+  const at = new Date(a.created_at).getTime();
+  const bt = new Date(b.created_at).getTime();
   return (at - bt) * dir;
 }
 
@@ -191,7 +191,7 @@ export default function LocationsPage() {
               id="location-search"
               value={searchDraft}
               onChange={(e) => setSearchDraft(e.target.value)}
-              placeholder="Name, description, slug…"
+              placeholder="Name, description…"
               className="h-9"
               autoComplete="off"
             />
@@ -216,7 +216,6 @@ export default function LocationsPage() {
                 >
                   <option value="created_at">Last created</option>
                   <option value="name">Name</option>
-                  <option value="slug">Slug</option>
                   <option value="updated_at">Last updated</option>
                 </select>
               </div>

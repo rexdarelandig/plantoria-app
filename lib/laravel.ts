@@ -26,10 +26,11 @@ export type Plant = {
   scientific_name: string;
   description: string;
   image_url: string;
-  slug: string;
   created_at: string;
   updated_at: string;
   user_id: number;
+  location_id?: number | null;
+  location?: { id: number; name: string } | null;
 };
 
 function pickToken(body: LoginJson): string | undefined {
@@ -225,7 +226,6 @@ export type Location = {
 export type LocationSortField =
   | "created_at"
   | "name"
-  | "slug"
   | "updated_at";
 
 function parseLocationsResponse(raw: unknown): Location[] {
@@ -260,7 +260,7 @@ function parsePlantsResponse(
   const { page, perPage } = fallback;
 
   if (Array.isArray(raw)) {
-    const plants = raw as Plant[];
+    const plants = (raw as unknown[]).map((p) => normalizePlantFromApi(p));
     const total = plants.length;
     return {
       plants,
@@ -286,7 +286,9 @@ function parsePlantsResponse(
   }
 
   const o = raw as Record<string, unknown>;
-  const plants = Array.isArray(o.data) ? (o.data as Plant[]) : [];
+  const plants = Array.isArray(o.data)
+    ? (o.data as unknown[]).map((p) => normalizePlantFromApi(p))
+    : [];
 
   const metaRaw = o.meta;
   if (metaRaw && typeof metaRaw === "object" && !Array.isArray(metaRaw)) {
@@ -419,10 +421,18 @@ export async function getLocations(
 export type CreatePlantPayload = {
   name: string;
   description: string;
+  /** Required when plants belong to a location. */
+  location_id: number;
   scientific_name?: string;
   image_url?: string;
-  slug?: string;
   trefle_id?: number;
+};
+
+export type UpdatePlantPayload = {
+  name: string;
+  description: string;
+  scientific_name?: string;
+  location_id: number | null;
 };
 
 function formatCreatePlantError(body: unknown, status: number): string {
@@ -441,14 +451,106 @@ function formatCreatePlantError(body: unknown, status: number): string {
   return "Could not save plant.";
 }
 
+function formatUpdatePlantError(body: unknown, status: number): string {
+  if (body && typeof body === "object") {
+    const o = body as Record<string, unknown>;
+    if (typeof o.message === "string") return o.message;
+    const errs = o.errors;
+    if (errs && typeof errs === "object" && !Array.isArray(errs)) {
+      const first = Object.values(errs)[0];
+      if (Array.isArray(first) && typeof first[0] === "string") return first[0];
+      if (typeof first === "string") return first;
+    }
+  }
+  if (status === 401) return "You must be signed in to update a plant.";
+  if (status === 404) return "Plant not found.";
+  if (status === 422) return "Please check the plant details.";
+  return "Could not update plant.";
+}
+
+function formatDeletePlantError(body: unknown, status: number): string {
+  if (body && typeof body === "object") {
+    const o = body as Record<string, unknown>;
+    if (typeof o.message === "string") return o.message;
+    const errs = o.errors;
+    if (errs && typeof errs === "object" && !Array.isArray(errs)) {
+      const first = Object.values(errs)[0];
+      if (Array.isArray(first) && typeof first[0] === "string") return first[0];
+      if (typeof first === "string") return first;
+    }
+  }
+  if (status === 401) return "You must be signed in to delete a plant.";
+  if (status === 404) return "Plant not found.";
+  return "Could not delete plant.";
+}
+
+function normalizePlantFromApi(item: unknown): Plant {
+  if (!item || typeof item !== "object") {
+    return item as Plant;
+  }
+  const raw = item as Record<string, unknown>;
+  const plant = item as Plant;
+
+  let nestedLoc: { id: number; name: string } | undefined;
+  const locVal = raw.location;
+  if (locVal && typeof locVal === "object" && !Array.isArray(locVal)) {
+    const L = locVal as Record<string, unknown>;
+    if (typeof L.id === "number") {
+      nestedLoc = {
+        id: L.id,
+        name: typeof L.name === "string" ? L.name : "",
+      };
+    }
+  }
+
+  let locationId: number | null | undefined;
+  const lidRaw = raw.location_id;
+  if (typeof lidRaw === "number") {
+    locationId = lidRaw;
+  } else if (lidRaw === null) {
+    locationId = null;
+  } else if (
+    typeof lidRaw === "string" &&
+    lidRaw.trim() !== "" &&
+    !Number.isNaN(Number(lidRaw))
+  ) {
+    locationId = Number(lidRaw);
+  } else if (typeof raw.locationId === "number") {
+    locationId = raw.locationId;
+  } else if (raw.locationId === null) {
+    locationId = null;
+  } else if (
+    typeof raw.locationId === "string" &&
+    raw.locationId.trim() !== "" &&
+    !Number.isNaN(Number(raw.locationId))
+  ) {
+    locationId = Number(raw.locationId);
+  } else if (nestedLoc !== undefined) {
+    locationId = nestedLoc.id;
+  } else if (typeof plant.location_id === "number") {
+    locationId = plant.location_id;
+  } else if (plant.location_id === null) {
+    locationId = null;
+  }
+
+  return {
+    ...plant,
+    ...(locationId !== undefined ? { location_id: locationId } : {}),
+    ...(nestedLoc !== undefined
+      ? { location: nestedLoc }
+      : plant.location !== undefined
+        ? { location: plant.location }
+        : {}),
+  };
+}
+
 function parseCreatedPlant(raw: unknown): Plant {
   if (raw && typeof raw === "object") {
     const o = raw as Record<string, unknown>;
-    if (o.data && typeof o.data === "object") {
-      return o.data as Plant;
-    }
-    if (typeof o.name === "string") {
-      return raw as Plant;
+    const inner =
+      o.data && typeof o.data === "object" ? (o.data as Record<string, unknown>) : o;
+    if (typeof inner.name === "string") {
+      return normalizePlantFromApi(inner);
     }
   }
   throw new Error("Unexpected response when creating plant.");
@@ -571,13 +673,96 @@ export async function createPlant(
     method: "POST",
     credentials: "include",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      name: payload.name.trim(),
+      description: payload.description.trim(),
+      location_id: payload.location_id,
+      ...(payload.scientific_name !== undefined && payload.scientific_name !== ""
+        ? { scientific_name: payload.scientific_name.trim() }
+        : {}),
+      ...(payload.image_url !== undefined && payload.image_url !== ""
+        ? { image_url: payload.image_url.trim() }
+        : {}),
+      ...(payload.trefle_id !== undefined ? { trefle_id: payload.trefle_id } : {}),
+    }),
   });
 
   const raw = (await res.json().catch(() => ({}))) as unknown;
 
   if (!res.ok) {
     throw new Error(formatCreatePlantError(raw, res.status));
+  }
+
+  return parseCreatedPlant(raw);
+}
+
+export async function deletePlant(
+  token: string | null,
+  id: number
+): Promise<void> {
+  const base = getLaravelBaseUrl();
+  await ensureSanctumCsrfCookie();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...xsrfHeaders(),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(
+    `${base}/api/plants/${encodeURIComponent(String(id))}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers,
+    },
+  );
+
+  if (!res.ok) {
+    const raw = (await res.json().catch(() => ({}))) as unknown;
+    throw new Error(formatDeletePlantError(raw, res.status));
+  }
+}
+
+/**
+ * PATCH /api/plants/:id
+ */
+export async function updatePlant(
+  token: string | null,
+  id: number,
+  payload: UpdatePlantPayload
+): Promise<Plant> {
+  const base = getLaravelBaseUrl();
+  await ensureSanctumCsrfCookie();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    ...xsrfHeaders(),
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(
+    `${base}/api/plants/${encodeURIComponent(String(id))}`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers,
+      body: JSON.stringify({
+        name: payload.name.trim(),
+        description: payload.description.trim(),
+        scientific_name: payload.scientific_name?.trim() ?? "",
+        location_id: payload.location_id,
+      }),
+    },
+  );
+
+  const raw = (await res.json().catch(() => ({}))) as unknown;
+
+  if (!res.ok) {
+    throw new Error(formatUpdatePlantError(raw, res.status));
   }
 
   return parseCreatedPlant(raw);

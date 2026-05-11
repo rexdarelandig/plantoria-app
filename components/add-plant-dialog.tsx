@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useRef, useState } from "react";
 import { LeafIcon } from "lucide-react";
 import Image from "next/image";
@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/auth-context";
-import { createPlant } from "@/lib/laravel";
+import { createPlant, getLocations } from "@/lib/laravel";
 import { cn } from "@/lib/utils";
 import { Field } from "@/components/ui/field";
 import { FieldLabel } from "@/components/ui/field";
@@ -36,7 +36,6 @@ export type TreflePlantSearchItem = {
   common_name?: string | null;
   family_common_name?: string | null;
   image_url?: string | null;
-  slug?: string | null;
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -83,14 +82,16 @@ function normalizeSearchItems(data: unknown): TreflePlantSearchItem[] {
             ? item.family_common_name
             : null,
         image_url: pickImageUrl(item),
-        slug: typeof item.slug === "string" ? item.slug : null,
       };
     })
     .filter((x): x is TreflePlantSearchItem => x !== null);
 }
 
+const locationSelectClass =
+  "h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-input/30";
+
 export function AddPlantDialog() {
-  const { token } = useAuth();
+  const { token, ready, user } = useAuth();
   const queryClient = useQueryClient();
   const dialogActionsRef = useRef<{
     close: () => void;
@@ -108,6 +109,13 @@ export function AddPlantDialog() {
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<TreflePlantSearchItem[]>([]);
   const [showNoMatches, setShowNoMatches] = useState(false);
+  const [locationId, setLocationId] = useState("");
+
+  const { data: locations = [], isPending: locationsPending } = useQuery({
+    queryKey: ["locations", token],
+    queryFn: ({ signal }) => getLocations(token, { signal }),
+    enabled: ready && user !== null,
+  });
 
   const resetForm = useCallback(() => {
     setLookupQuery("");
@@ -119,6 +127,7 @@ export function AddPlantDialog() {
     setError(null);
     setSearchLoading(false);
     setSaving(false);
+    setLocationId("");
   }, []);
 
   async function handleSearch(e: FormEvent) {
@@ -165,12 +174,13 @@ export function AddPlantDialog() {
       plant.common_name?.trim() || plant.scientific_name?.trim() || "";
     setSelected(plant);
     setName(displayName);
+    setScientificName(plant.scientific_name?.trim() ?? "");
     setDescription("");
     setError(null);
   }
 
   async function handleSave() {
-    if (!selected || !name.trim()) return;
+    if (!selected || !name.trim() || !locationId) return;
 
     setError(null);
     setSaving(true);
@@ -179,9 +189,9 @@ export function AddPlantDialog() {
       await createPlant(token, {
         name: name.trim(),
         description: description.trim(),
+        location_id: Number(locationId),
         scientific_name: selected.scientific_name ?? undefined,
         image_url: selected.image_url ?? undefined,
-        slug: selected.slug ?? undefined,
         trefle_id: selected.id,
       });
       await queryClient.invalidateQueries({ queryKey: ["plants"] });
@@ -311,11 +321,6 @@ export function AddPlantDialog() {
                                       {subtitle}
                                     </span>
                                   ) : null}
-                                  {plant.slug ? (
-                                    <span className="truncate text-xs text-muted-foreground">
-                                      {plant.slug}
-                                    </span>
-                                  ) : null}
                                 </div>
                               </button>
                             </li>
@@ -344,6 +349,29 @@ export function AddPlantDialog() {
 
         <div className="flex flex-col gap-4 border-t border-border pt-4">
           <Field>
+            <FieldLabel htmlFor="plant-location">
+              Location <span className="text-destructive">*</span>
+            </FieldLabel>
+            <select
+              id="plant-location"
+              className={locationSelectClass}
+              value={locationId}
+              onChange={(ev) => setLocationId(ev.target.value)}
+              disabled={locationsPending || locations.length === 0}
+            >
+              <option value="">
+                {locationsPending
+                  ? "Loading locations…"
+                  : locations.length === 0
+                    ? "No locations yet — add one first"
+                    : "Select a location"}
+              </option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </select>
             <FieldLabel htmlFor="plant-name">
               Plant name <span className="text-destructive">*</span>
             </FieldLabel>
@@ -376,7 +404,13 @@ export function AddPlantDialog() {
           <Button
             type="button"
             className="w-full sm:w-auto"
-            disabled={saving || !name.trim()}
+            disabled={
+              saving ||
+              !name.trim() ||
+              !selected ||
+              !locationId ||
+              locations.length === 0
+            }
             onClick={handleSave}
           >
             {saving ? "Saving…" : "Save plant"}

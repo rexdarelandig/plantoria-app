@@ -1,15 +1,18 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
   GridIcon,
   LeafIcon,
   ListIcon,
+  PencilIcon,
+  TrashIcon,
 } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { useAuth } from "@/lib/auth-context";
 import { AddPlantDialog } from "@/components/add-plant-dialog";
@@ -18,12 +21,32 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getPlants, type PlantSortField } from "@/lib/laravel";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  deletePlant,
+  getLocations,
+  getPlants,
+  type Location,
+  type Plant,
+  type PlantsListResult,
+  type PlantSortField,
+  updatePlant,
+} from "@/lib/laravel";
 import {
   Table,
   TableBody,
@@ -41,8 +64,20 @@ const selectClass =
 
 const SEARCH_DEBOUNCE_MS = 400;
 
+function plantLocationLabel(plant: Plant, locations: Location[]): string {
+  const nested = plant.location;
+  if (nested?.name?.trim()) return nested.name;
+  const lid = plant.location_id;
+  if (typeof lid === "number") {
+    const match = locations.find((l) => l.id === lid);
+    if (match) return match.name;
+  }
+  return "—";
+}
+
 export default function PlantsPage() {
   const { token, ready, user } = useAuth();
+  const queryClient = useQueryClient();
 
   const [sortKey, setSortKey] = useState<PlantSortField>("created_at");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -51,6 +86,58 @@ export default function PlantsPage() {
   const [page, setPage] = useState(1);
   const [searchDraft, setSearchDraft] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Plant | null>(null);
+  const [editTarget, setEditTarget] = useState<Plant | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editScientificName, setEditScientificName] = useState("");
+  const [editLocationId, setEditLocationId] = useState("");
+
+  const invalidatePlantQueries = () =>
+    queryClient.invalidateQueries({
+      predicate: (q) =>
+        Array.isArray(q.queryKey) && q.queryKey[0] === "plants",
+    });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => deletePlant(token, id),
+    onSuccess: async (_, deletedId) => {
+      const caches = queryClient.getQueriesData<PlantsListResult>({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) && q.queryKey[0] === "plants",
+      });
+      let removed: Plant | undefined;
+      for (const [, data] of caches) {
+        removed = data?.plants?.find((p) => p.id === deletedId);
+        if (removed) break;
+      }
+      await invalidatePlantQueries();
+      setDeleteTarget(null);
+      toast.success(
+        removed ? `"${removed.name}" was deleted.` : "Plant deleted.",
+      );
+    },
+  });
+
+  const editMutation = useMutation({
+    mutationFn: ({
+      id,
+      payload,
+    }: {
+      id: number;
+      payload: {
+        name: string;
+        description: string;
+        scientific_name: string;
+        location_id: number | null;
+      };
+    }) => updatePlant(token, id, payload),
+    onSuccess: async (updated) => {
+      await invalidatePlantQueries();
+      setEditTarget(null);
+      toast.success(`"${updated.name}" was updated.`);
+    },
+  });
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -92,6 +179,12 @@ export default function PlantsPage() {
         },
         { signal }
       ),
+    enabled: ready && user !== null,
+  });
+
+  const { data: locations = [] } = useQuery({
+    queryKey: ["locations", token],
+    queryFn: ({ signal }) => getLocations(token, { signal }),
     enabled: ready && user !== null,
   });
 
@@ -272,7 +365,7 @@ export default function PlantsPage() {
                   key={plant.id}
                   className="gap-0 overflow-hidden p-0 transition-all duration-300 hover:scale-[1.01] hover:shadow-lg"
                 >
-                  <div className="relative aspect-[4/3] w-full bg-muted">
+                  <div className="relative aspect-4/3 w-full bg-muted">
                     {plant.image_url ? (
                       <Image
                         src={plant.image_url}
@@ -283,7 +376,7 @@ export default function PlantsPage() {
                         sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                       />
                     ) : (
-                      <div className="flex h-full min-h-[9rem] items-center justify-center">
+                      <div className="flex h-full min-h-36 items-center justify-center">
                         <LeafIcon
                           className="size-12 text-muted-foreground"
                           aria-hidden
@@ -299,6 +392,12 @@ export default function PlantsPage() {
                       </CardDescription>
                     ) : null}
                   </CardHeader>
+                  <p className="px-4 pb-2 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground/90">
+                      Location
+                    </span>{" "}
+                    {plantLocationLabel(plant, locations)}
+                  </p>
                   {plant.description ? (
                     <CardContent className="px-4 pb-4 pt-0">
                       <p className="line-clamp-4 text-pretty text-sm text-muted-foreground">
@@ -306,6 +405,46 @@ export default function PlantsPage() {
                       </p>
                     </CardContent>
                   ) : null}
+                  <CardFooter className="flex justify-end gap-1 border-t border-border bg-muted/30 px-4 py-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon-sm"
+                      aria-label={`Edit ${plant.name}`}
+                      disabled={
+                        deleteMutation.isPending ||
+                        (editMutation.isPending &&
+                          editTarget?.id === plant.id)
+                      }
+                      onClick={() => {
+                        setEditTarget(plant);
+                        setEditName(plant.name);
+                        setEditDescription(plant.description ?? "");
+                        setEditScientificName(plant.scientific_name ?? "");
+                        setEditLocationId(
+                          plant.location_id != null
+                            ? String(plant.location_id)
+                            : "",
+                        );
+                      }}
+                    >
+                      <PencilIcon className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="icon-sm"
+                      aria-label={`Delete ${plant.name}`}
+                      disabled={
+                        deleteMutation.isPending ||
+                        (editMutation.isPending &&
+                          editTarget?.id === plant.id)
+                      }
+                      onClick={() => setDeleteTarget(plant)}
+                    >
+                      <TrashIcon className="size-4" />
+                    </Button>
+                  </CardFooter>
                 </Card>
               ))}
             </div>
@@ -332,9 +471,14 @@ export default function PlantsPage() {
                     Scientific name
                   </TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead className="hidden md:table-cell">Slug</TableHead>
-                  <TableHead className="hidden text-right lg:table-cell">
+                  <TableHead className="hidden max-w-40 md:table-cell">
+                    Location
+                  </TableHead>
+                  <TableHead className="hidden lg:table-cell">
                     Updated
+                  </TableHead>
+                  <TableHead className="hidden text-right lg:table-cell">
+                    Actions
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -382,13 +526,52 @@ export default function PlantsPage() {
                           : "—"}
                       </p>
                     </TableCell>
-                    <TableCell className="hidden max-w-[120px] md:table-cell">
-                      <span className="truncate text-muted-foreground">
-                        {plant.slug || "—"}
-                      </span>
+                    <TableCell className="hidden max-w-40 truncate md:table-cell">
+                      {plantLocationLabel(plant, locations)}
                     </TableCell>
-                    <TableCell className="hidden whitespace-nowrap text-right text-muted-foreground lg:table-cell">
+                    <TableCell className="hidden whitespace-nowrap text-muted-foreground lg:table-cell">
                       {new Date(plant.updated_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-right lg:table-cell">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        aria-label={`Edit ${plant.name}`}
+                        disabled={
+                          deleteMutation.isPending ||
+                          (editMutation.isPending &&
+                            editTarget?.id === plant.id)
+                        }
+                        onClick={() => {
+                          setEditTarget(plant);
+                          setEditName(plant.name);
+                          setEditDescription(plant.description ?? "");
+                          setEditScientificName(plant.scientific_name ?? "");
+                          setEditLocationId(
+                            plant.location_id != null
+                              ? String(plant.location_id)
+                              : "",
+                          );
+                        }}
+                      >
+                        <PencilIcon className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        className="ml-2"
+                        variant="destructive"
+                        size="icon-sm"
+                        aria-label={`Delete ${plant.name}`}
+                        disabled={
+                          deleteMutation.isPending ||
+                          (editMutation.isPending &&
+                            editTarget?.id === plant.id)
+                        }
+                        onClick={() => setDeleteTarget(plant)}
+                      >
+                        <TrashIcon className="size-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -397,6 +580,169 @@ export default function PlantsPage() {
           )}
         </TabsContent>
       </Tabs>
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            deleteMutation.reset();
+          }
+        }}
+      >
+        <DialogContent showCloseButton={!deleteMutation.isPending}>
+          <DialogHeader>
+            <DialogTitle>Delete plant?</DialogTitle>
+            <DialogDescription>
+              This will permanently remove{" "}
+              <span className="font-medium text-foreground">
+                {deleteTarget?.name}
+              </span>
+              . This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteMutation.isError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {deleteMutation.error instanceof Error
+                ? deleteMutation.error.message
+                : "Could not delete plant."}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                setDeleteTarget(null);
+                deleteMutation.reset();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => {
+                if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+              }}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={editTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditTarget(null);
+            setEditLocationId("");
+            editMutation.reset();
+          }
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-lg"
+          showCloseButton={!editMutation.isPending}
+        >
+          <DialogHeader>
+            <DialogTitle>Edit plant</DialogTitle>
+            <DialogDescription>
+              Update the name, scientific name, location, and description.
+            </DialogDescription>
+          </DialogHeader>
+          {editMutation.isError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {editMutation.error instanceof Error
+                ? editMutation.error.message
+                : "Could not update plant."}
+            </p>
+          ) : null}
+          <div className="flex flex-col gap-4 border-t border-border pt-4">
+            <Field>
+              <FieldLabel htmlFor="edit-plant-name">
+                Name <span className="text-destructive">*</span>
+              </FieldLabel>
+              <Input
+                id="edit-plant-name"
+                value={editName}
+                onChange={(ev) => setEditName(ev.target.value)}
+                className="h-9"
+              />
+              <Label htmlFor="edit-plant-scientific" className="mt-2">
+                Scientific name
+              </Label>
+              <Input
+                id="edit-plant-scientific"
+                value={editScientificName}
+                onChange={(ev) => setEditScientificName(ev.target.value)}
+                className="h-9"
+              />
+              <Label htmlFor="edit-plant-location" className="mt-2">
+                Location
+              </Label>
+              <select
+                id="edit-plant-location"
+                className={selectClass}
+                value={editLocationId}
+                onChange={(ev) => setEditLocationId(ev.target.value)}
+              >
+                <option value="">No location</option>
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+              <Label htmlFor="edit-plant-description" className="mt-2">
+                Description
+              </Label>
+              <Textarea
+                id="edit-plant-description"
+                value={editDescription}
+                onChange={(ev) => setEditDescription(ev.target.value)}
+                placeholder="Care notes and other details"
+                rows={4}
+              />
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={editMutation.isPending}
+              onClick={() => {
+                setEditTarget(null);
+                editMutation.reset();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={editMutation.isPending || !editName.trim()}
+              onClick={() => {
+                if (!editTarget) return;
+                editMutation.mutate({
+                  id: editTarget.id,
+                  payload: {
+                    name: editName.trim(),
+                    description: editDescription.trim(),
+                    scientific_name: editScientificName.trim(),
+                    location_id:
+                      editLocationId === ""
+                        ? null
+                        : Number(editLocationId),
+                  },
+                });
+              }}
+            >
+              {editMutation.isPending ? "Saving…" : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
