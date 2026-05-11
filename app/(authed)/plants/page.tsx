@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
+  EyeIcon,
   GridIcon,
   LeafIcon,
   ListIcon,
@@ -92,6 +93,7 @@ export default function PlantsPage() {
   const [editDescription, setEditDescription] = useState("");
   const [editScientificName, setEditScientificName] = useState("");
   const [editLocationId, setEditLocationId] = useState("");
+  const [detailPlant, setDetailPlant] = useState<Plant | null>(null);
 
   const invalidatePlantQueries = () =>
     queryClient.invalidateQueries({
@@ -363,7 +365,17 @@ export default function PlantsPage() {
               {plants.map((plant) => (
                 <Card
                   key={plant.id}
-                  className="gap-0 overflow-hidden p-0 transition-all duration-300 hover:scale-[1.01] hover:shadow-lg"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`View details for ${plant.name}`}
+                  className="cursor-pointer gap-0 overflow-hidden p-0 outline-none transition-all duration-300 hover:scale-[1.01] hover:shadow-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  onClick={() => setDetailPlant(plant)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setDetailPlant(plant);
+                    }
+                  }}
                 >
                   <div className="relative aspect-4/3 w-full bg-muted">
                     {plant.image_url ? (
@@ -416,7 +428,8 @@ export default function PlantsPage() {
                         (editMutation.isPending &&
                           editTarget?.id === plant.id)
                       }
-                      onClick={() => {
+                      onClick={(ev) => {
+                        ev.stopPropagation();
                         setEditTarget(plant);
                         setEditName(plant.name);
                         setEditDescription(plant.description ?? "");
@@ -440,7 +453,10 @@ export default function PlantsPage() {
                         (editMutation.isPending &&
                           editTarget?.id === plant.id)
                       }
-                      onClick={() => setDeleteTarget(plant)}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        setDeleteTarget(plant);
+                      }}
                     >
                       <TrashIcon className="size-4" />
                     </Button>
@@ -533,11 +549,18 @@ export default function PlantsPage() {
                       {new Date(plant.updated_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="hidden whitespace-nowrap text-right lg:table-cell">
+                      <Button type="button" variant="outline" size="icon-sm" aria-label={`View ${plant.name}`} onClick={(ev) => {
+                        ev.stopPropagation();
+                        setDetailPlant(plant);
+                      }}>
+                        <EyeIcon className="size-4" />
+                      </Button>
                       <Button
                         type="button"
                         variant="outline"
                         size="icon-sm"
                         aria-label={`Edit ${plant.name}`}
+                        className="ml-2"
                         disabled={
                           deleteMutation.isPending ||
                           (editMutation.isPending &&
@@ -580,6 +603,80 @@ export default function PlantsPage() {
           )}
         </TabsContent>
       </Tabs>
+      <Dialog
+        open={detailPlant !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetailPlant(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          {detailPlant ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>{detailPlant.name}</DialogTitle>
+                {detailPlant.scientific_name?.trim() ? (
+                  <DialogDescription className="text-pretty italic">
+                    {detailPlant.scientific_name}
+                  </DialogDescription>
+                ) : (
+                  <DialogDescription className="sr-only">
+                    Plant details and photo.
+                  </DialogDescription>
+                )}
+              </DialogHeader>
+              <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted">
+                {detailPlant.image_url ? (
+                  <Image
+                    src={detailPlant.image_url}
+                    alt={detailPlant.name}
+                    fill
+                    unoptimized
+                    className="object-cover"
+                    sizes="(max-width: 640px) 100vw, 512px"
+                  />
+                ) : (
+                  <div className="flex h-full min-h-40 items-center justify-center">
+                    <LeafIcon
+                      className="size-16 text-muted-foreground"
+                      aria-hidden
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="grid gap-3 text-sm">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Location
+                  </p>
+                  <p className="text-pretty text-foreground">
+                    {plantLocationLabel(detailPlant, locations)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Description
+                  </p>
+                  <p className="text-pretty whitespace-pre-wrap text-foreground">
+                    {detailPlant.description?.trim()
+                      ? detailPlant.description
+                      : "—"}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
+                  <span>
+                    Added{" "}
+                    {new Date(detailPlant.created_at).toLocaleString()}
+                  </span>
+                  <span>
+                    Updated{" "}
+                    {new Date(detailPlant.updated_at).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={deleteTarget !== null}
         onOpenChange={(open) => {
